@@ -48,6 +48,7 @@ type Client struct {
 
 	connAccess sync.RWMutex
 	conn       *clientQUICConnection
+	lastActive time.Time
 }
 
 func NewClient(options ClientOptions) (*Client, error) {
@@ -122,6 +123,8 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 		connDone:   make(chan struct{}),
 		udpConnMap: make(map[uint16]*udpPacketConn),
 	}
+	c.lastActive = time.Time{}
+	go c.watchConnForDC(quicConn)
 	go func() {
 		hErr := c.clientHandshake(quicConn)
 		if hErr != nil {
@@ -135,6 +138,23 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	go c.loopHeartbeats(conn)
 	c.conn = conn
 	return conn, nil
+}
+
+func (c *Client) IdleTime() time.Duration {
+	if c.lastActive.IsZero() {
+		return 0
+	}
+
+	return time.Since(c.lastActive)
+}
+
+func (c *Client) watchConnForDC(conn quic.Connection) {
+	select {
+	case <-conn.Context().Done():
+		c.connAccess.Lock()
+		defer c.connAccess.Unlock()
+		c.lastActive = time.Now()
+	}
 }
 
 func (c *Client) clientHandshake(conn quic.Connection) error {
