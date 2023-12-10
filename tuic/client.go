@@ -47,6 +47,7 @@ type Client struct {
 
 	connAccess sync.Mutex
 	conn       *clientQUICConnection
+	lastActive time.Time
 }
 
 func NewClient(options ClientOptions) (*Client, error) {
@@ -115,7 +116,10 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 		rawConn:    udpConn,
 		connDone:   make(chan struct{}),
 		udpConnMap: make(map[uint16]*udpPacketConn),
+		tcpConnMap: make(map[*quic.Stream]struct{}),
 	}
+	c.lastActive = time.Time{}
+	go c.watchConnForDC(conn)
 	go func() {
 		hErr := c.clientHandshake(quicConn)
 		if hErr != nil {
@@ -129,6 +133,34 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	go c.loopHeartbeats(conn)
 	c.conn = conn
 	return conn, nil
+}
+
+func (c *Client) IdleTime() time.Duration {
+	if c.lastActive.IsZero() {
+		return 0
+	}
+
+	return time.Since(c.lastActive)
+}
+
+func (c *Client) watchConnForDC(conn *clientQUICConnection) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-conn.quicConn.Context().Done():
+			c.connAccess.Lock()
+			c.lastActive = time.Now()
+			c.connAccess.Unlock()
+			return
+		case <-ticker.C:
+			if conn.getConnCount() == 0 && c.lastActive.IsZero() {
+				c.connAccess.Lock()
+				c.lastActive = time.Now()
+				c.connAccess.Unlock()
+			}
+		}
+	}
 }
 
 func (c *Client) clientHandshake(conn *quic.Conn) error {
@@ -148,6 +180,12 @@ func (c *Client) clientHandshake(conn *quic.Conn) error {
 	authRequest.Write(c.uuid[:])
 	authRequest.Write(tuicAuthToken)
 	return common.Error(authStream.Write(authRequest.Bytes()))
+}
+
+func (c *Client) onConnOpen() {
+	c.connAccess.Lock()
+	defer c.connAccess.Unlock()
+	c.lastActive = time.Time{}
 }
 
 func (c *Client) loopHeartbeats(conn *clientQUICConnection) {
@@ -175,6 +213,8 @@ func (c *Client) DialConn(ctx context.Context, destination M.Socksaddr) (net.Con
 	if err != nil {
 		return nil, err
 	}
+	c.onConnOpen()
+	conn.registerTCPStream(stream)
 	return &clientConn{
 		Stream:      stream,
 		parent:      conn,
@@ -193,6 +233,7 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 		delete(conn.udpConnMap, sessionID)
 		conn.udpAccess.Unlock()
 	})
+	c.onConnOpen()
 	conn.udpAccess.Lock()
 	sessionID = conn.udpSessionID
 	conn.udpSessionID++
@@ -221,6 +262,27 @@ type clientQUICConnection struct {
 	udpAccess    sync.RWMutex
 	udpConnMap   map[uint16]*udpPacketConn
 	udpSessionID uint16
+	tcpConnMap   map[*quic.Stream]struct{}
+	tcpAccess    sync.Mutex
+}
+
+func (c *clientQUICConnection) registerTCPStream(stream *quic.Stream) {
+	c.tcpAccess.Lock()
+	defer c.tcpAccess.Unlock()
+	c.tcpConnMap[stream] = struct{}{}
+}
+
+func (c *clientQUICConnection) unregisterTCPStream(stream *quic.Stream) {
+	c.tcpAccess.Lock()
+	defer c.tcpAccess.Unlock()
+	if _, ok := c.tcpConnMap[stream]; !ok {
+		return
+	}
+	delete(c.tcpConnMap, stream)
+}
+
+func (c *clientQUICConnection) getConnCount() int {
+	return len(c.udpConnMap) + len(c.tcpConnMap)
 }
 
 func (c *clientQUICConnection) active() bool {
@@ -286,6 +348,7 @@ func (c *clientConn) Write(b []byte) (n int, err error) {
 }
 
 func (c *clientConn) Close() error {
+	c.parent.unregisterTCPStream(c.Stream)
 	c.Stream.CancelRead(0)
 	return c.Stream.Close()
 }
