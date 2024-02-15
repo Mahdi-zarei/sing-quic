@@ -3,6 +3,7 @@ package hysteria2
 import (
 	"context"
 	"fmt"
+	"github.com/sagernet/quic-go/http3"
 	"io"
 	"net"
 	"net/http"
