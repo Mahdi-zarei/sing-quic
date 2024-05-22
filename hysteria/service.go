@@ -17,7 +17,6 @@ import (
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/auth"
 	"github.com/sagernet/sing/common/baderror"
-	"github.com/sagernet/sing/common/canceler"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -273,8 +272,7 @@ func (s *serverSession[U]) handleStream(stream quic.Stream) error {
 			udpConn.closeWithError(E.Cause(err, "write server response"))
 			return err
 		}
-		newCtx, newConn := canceler.NewPacketConn(udpConn.ctx, udpConn, s.udpTimeout)
-		go s.handler.NewPacketConnectionEx(newCtx, newConn, M.SocksaddrFromNet(s.quicConn.RemoteAddr()).Unwrap(), M.ParseSocksaddrHostPort(request.Host, request.Port), nil)
+		go s.handler.NewPacketConnectionEx(udpConn.ctx, udpConn, M.SocksaddrFromNet(s.quicConn.RemoteAddr()).Unwrap(), M.ParseSocksaddrHostPort(request.Host, request.Port), nil)
 		holdBuffer := make([]byte, 1024)
 		for {
 			_, hErr := stream.Read(holdBuffer)
