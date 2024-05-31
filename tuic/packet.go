@@ -369,6 +369,7 @@ func newUDPDefragger() *udpDefragger {
 			cache.WithEvict[uint16, *packetItem](func(key uint16, value *packetItem) {
 				releaseMessages(value.messages)
 			}),
+			cache.WithDisabledCleaner[uint16, *packetItem](),
 		),
 	}
 }
