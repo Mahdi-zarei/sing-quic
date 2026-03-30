@@ -39,6 +39,7 @@ type ClientOptions struct {
 	ServerAddress      M.Socksaddr
 	ServerPorts        []string
 	HopInterval        time.Duration
+	HopIntervalMax     time.Duration
 	SendBPS            uint64
 	ReceiveBPS         uint64
 	SalamanderPassword string
@@ -56,6 +57,7 @@ type Client struct {
 	serverAddr         M.Socksaddr
 	serverPorts        []uint16
 	hopInterval        time.Duration
+	hopIntervalMax     time.Duration
 	sendBPS            uint64
 	receiveBPS         uint64
 	salamanderPassword string
@@ -108,6 +110,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		serverAddr:         options.ServerAddress,
 		serverPorts:        serverPorts,
 		hopInterval:        options.HopInterval,
+		hopIntervalMax:     options.HopIntervalMax,
 		sendBPS:            options.SendBPS,
 		receiveBPS:         options.ReceiveBPS,
 		salamanderPassword: options.SalamanderPassword,
@@ -227,7 +230,7 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	if len(c.serverPorts) == 0 {
 		packetConn, err = dialFunc(c.serverAddr)
 	} else {
-		packetConn, err = hysteria.NewHopPacketConn(dialFunc, c.serverAddr, c.serverPorts, c.hopInterval)
+		packetConn, err = hysteria.NewHopPacketConn(dialFunc, c.serverAddr, c.serverPorts, c.hopInterval, c.hopIntervalMax)
 	}
 	if err != nil {
 		return nil, err

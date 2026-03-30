@@ -269,7 +269,7 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	if len(c.serverPorts) == 0 {
 		packetConn, err = dialFunc(c.serverAddr)
 	} else {
-		packetConn, err = NewHopPacketConn(dialFunc, c.serverAddr, c.serverPorts, c.hopInterval)
+		packetConn, err = NewHopPacketConn(dialFunc, c.serverAddr, c.serverPorts, c.hopInterval, 0)
 	}
 	if err != nil {
 		return nil, err
