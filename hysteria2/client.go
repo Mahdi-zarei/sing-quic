@@ -15,7 +15,6 @@ import (
 	"github.com/sagernet/quic-go/congestion"
 	"github.com/sagernet/quic-go/http3"
 	qtls "github.com/sagernet/sing-quic"
-	congestion_meta1 "github.com/sagernet/sing-quic/congestion_meta1"
 	congestion_meta2 "github.com/sagernet/sing-quic/congestion_meta2"
 	"github.com/sagernet/sing-quic/hysteria"
 	hyCC "github.com/sagernet/sing-quic/hysteria/congestion"
@@ -46,6 +45,7 @@ type ClientOptions struct {
 	Password           string
 	TLSConfig          aTLS.Config
 	UDPDisabled        bool
+	BBRProfile         string
 }
 
 type Client struct {
@@ -63,6 +63,7 @@ type Client struct {
 	tlsConfig          aTLS.Config
 	quicConfig         *quic.Config
 	udpDisabled        bool
+	bbrProfile         congestion_meta2.Profile
 
 	connAccess sync.Mutex
 	conn       *clientQUICConnection
@@ -82,6 +83,14 @@ func NewClient(options ClientOptions) (*Client, error) {
 	}
 	if len(options.TLSConfig.NextProtos()) == 0 {
 		options.TLSConfig.SetNextProtos([]string{http3.NextProtoH3})
+	}
+	bbrProfile := congestion_meta2.ProfileStandard
+	if options.BBRProfile != "" {
+		var err error
+		bbrProfile, err = congestion_meta2.ParseProfile(options.BBRProfile)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var serverPorts []uint16
 	if len(options.ServerPorts) > 0 {
@@ -106,6 +115,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		tlsConfig:          options.TLSConfig,
 		quicConfig:         quicConfig,
 		udpDisabled:        options.UDPDisabled,
+		bbrProfile:         bbrProfile,
 	}, nil
 }
 
@@ -268,10 +278,10 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 		if timeFunc == nil {
 			timeFunc = time.Now
 		}
-		quicConn.SetCongestionControl(congestion_meta2.NewBbrSender(
+		quicConn.SetCongestionControl(congestion_meta2.NewBbrSenderWithProfile(
 			congestion_meta2.DefaultClock{TimeFunc: timeFunc},
 			congestion.ByteCount(quicConn.Config().InitialPacketSize),
-			congestion.ByteCount(congestion_meta1.InitialCongestionWindow),
+			c.bbrProfile,
 		))
 	}
 	conn := &clientQUICConnection{

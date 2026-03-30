@@ -16,7 +16,6 @@ import (
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/quic-go/quicvarint"
 	qtls "github.com/sagernet/sing-quic"
-	congestion_meta1 "github.com/sagernet/sing-quic/congestion_meta1"
 	congestion_meta2 "github.com/sagernet/sing-quic/congestion_meta2"
 	"github.com/sagernet/sing-quic/hysteria"
 	hyCC "github.com/sagernet/sing-quic/hysteria/congestion"
@@ -44,6 +43,7 @@ type ServiceOptions struct {
 	UDPTimeout            time.Duration
 	Handler               ServerHandler
 	MasqueradeHandler     http.Handler
+	BBRProfile            string
 }
 
 type ServerHandler interface {
@@ -67,6 +67,7 @@ type Service[U comparable] struct {
 	handler               ServerHandler
 	masqueradeHandler     http.Handler
 	quicListener          io.Closer
+	bbrProfile            congestion_meta2.Profile
 }
 
 func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
@@ -81,6 +82,14 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		MaxIdleTimeout:                 hysteria.DefaultMaxIdleTimeout,
 		KeepAlivePeriod:                hysteria.DefaultKeepAlivePeriod,
 		DisablePathManager:             true,
+	}
+	bbrProfile := congestion_meta2.ProfileStandard
+	if options.BBRProfile != "" {
+		var err error
+		bbrProfile, err = congestion_meta2.ParseProfile(options.BBRProfile)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if options.MasqueradeHandler == nil {
 		options.MasqueradeHandler = http.NotFoundHandler()
@@ -103,6 +112,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		udpTimeout:            options.UDPTimeout,
 		handler:               options.Handler,
 		masqueradeHandler:     options.MasqueradeHandler,
+		bbrProfile:            bbrProfile,
 	}, nil
 }
 
@@ -216,10 +226,10 @@ func (s *serverSession[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if timeFunc == nil {
 				timeFunc = time.Now
 			}
-			s.quicConn.SetCongestionControl(congestion_meta2.NewBbrSender(
+			s.quicConn.SetCongestionControl(congestion_meta2.NewBbrSenderWithProfile(
 				congestion_meta2.DefaultClock{TimeFunc: timeFunc},
 				congestion.ByteCount(s.quicConn.Config().InitialPacketSize),
-				congestion.ByteCount(congestion_meta1.InitialCongestionWindow),
+				s.bbrProfile,
 			))
 			rxAuto = true
 		}
