@@ -39,6 +39,7 @@ type ServiceOptions struct {
 	IgnoreClientBandwidth bool
 	SalamanderPassword    string
 	TLSConfig             aTLS.ServerConfig
+	QUICOptions           qtls.QUICOptions
 	UDPDisabled           bool
 	UDPTimeout            time.Duration
 	Handler               ServerHandler
@@ -83,6 +84,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		KeepAlivePeriod:                hysteria.DefaultKeepAlivePeriod,
 		DisablePathManager:             true,
 	}
+	qtls.ApplyQUICOptions(quicConfig, options.QUICOptions)
 	bbrProfile := congestion_meta2.ProfileStandard
 	if options.BBRProfile != "" {
 		var err error

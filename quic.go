@@ -5,12 +5,23 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	M "github.com/sagernet/sing/common/metadata"
 	aTLS "github.com/sagernet/sing/common/tls"
 )
+
+type QUICOptions struct {
+	IdleTimeout             time.Duration
+	KeepAlivePeriod         time.Duration
+	StreamReceiveWindow     uint64
+	ConnectionReceiveWindow uint64
+	MaxConcurrentStreams    int
+	InitialPacketSize       int
+	DisablePathMTUDiscovery bool
+}
 
 type Config interface {
 	Dial(ctx context.Context, conn net.PacketConn, addr net.Addr, config *quic.Config) (*quic.Conn, error)
@@ -34,6 +45,32 @@ type EarlyListener interface {
 	Accept(ctx context.Context) (*quic.Conn, error)
 	Close() error
 	Addr() net.Addr
+}
+
+func ApplyQUICOptions(quicConfig *quic.Config, options QUICOptions) {
+	if options.StreamReceiveWindow != 0 {
+		quicConfig.InitialStreamReceiveWindow = options.StreamReceiveWindow
+		quicConfig.MaxStreamReceiveWindow = options.StreamReceiveWindow
+	}
+	if options.ConnectionReceiveWindow != 0 {
+		quicConfig.InitialConnectionReceiveWindow = options.ConnectionReceiveWindow
+		quicConfig.MaxConnectionReceiveWindow = options.ConnectionReceiveWindow
+	}
+	if options.MaxConcurrentStreams > 0 {
+		quicConfig.MaxIncomingStreams = int64(options.MaxConcurrentStreams)
+	}
+	if options.KeepAlivePeriod > 0 {
+		quicConfig.KeepAlivePeriod = options.KeepAlivePeriod
+	}
+	if options.IdleTimeout > 0 {
+		quicConfig.MaxIdleTimeout = options.IdleTimeout
+	}
+	if options.InitialPacketSize > 0 {
+		quicConfig.InitialPacketSize = uint16(options.InitialPacketSize)
+	}
+	if options.DisablePathMTUDiscovery {
+		quicConfig.DisablePathMTUDiscovery = true
+	}
 }
 
 func Dial(ctx context.Context, conn net.PacketConn, addr net.Addr, config aTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {

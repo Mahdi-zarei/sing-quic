@@ -45,6 +45,7 @@ type ClientOptions struct {
 	SalamanderPassword string
 	Password           string
 	TLSConfig          aTLS.Config
+	QUICOptions        qtls.QUICOptions
 	UDPDisabled        bool
 	BBRProfile         string
 }
@@ -83,6 +84,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		MaxIdleTimeout:                 hysteria.DefaultMaxIdleTimeout,
 		KeepAlivePeriod:                hysteria.DefaultKeepAlivePeriod,
 	}
+	qtls.ApplyQUICOptions(quicConfig, options.QUICOptions)
 	if len(options.TLSConfig.NextProtos()) == 0 {
 		options.TLSConfig.SetNextProtos([]string{http3.NextProtoH3})
 	}
