@@ -73,7 +73,22 @@ func ApplyQUICOptions(quicConfig *quic.Config, options QUICOptions) {
 	}
 }
 
+func quicConfigWithHandshakeTimeout(quicConfig *quic.Config, handshakeTimeout time.Duration) *quic.Config {
+	if handshakeTimeout <= 0 {
+		return quicConfig
+	}
+	if quicConfig == nil {
+		return &quic.Config{HandshakeIdleTimeout: handshakeTimeout}
+	}
+	if quicConfig.HandshakeIdleTimeout != 0 {
+		return quicConfig
+	}
+	quicConfig.HandshakeIdleTimeout = handshakeTimeout
+	return quicConfig
+}
+
 func Dial(ctx context.Context, conn net.PacketConn, addr net.Addr, config aTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+	quicConfig = quicConfigWithHandshakeTimeout(quicConfig, config.HandshakeTimeout())
 	if quicTLSConfig, isQUICConfig := config.(Config); isQUICConfig {
 		quicConn, err := quicTLSConfig.Dial(ctx, conn, addr, quicConfig)
 		return quicConn, WrapError(err)
@@ -87,6 +102,7 @@ func Dial(ctx context.Context, conn net.PacketConn, addr net.Addr, config aTLS.C
 }
 
 func DialEarly(ctx context.Context, conn net.PacketConn, addr net.Addr, config aTLS.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+	quicConfig = quicConfigWithHandshakeTimeout(quicConfig, config.HandshakeTimeout())
 	if quicTLSConfig, isQUICConfig := config.(Config); isQUICConfig {
 		quicConn, err := quicTLSConfig.DialEarly(ctx, conn, addr, quicConfig)
 		return quicConn, WrapError(err)
@@ -100,6 +116,8 @@ func DialEarly(ctx context.Context, conn net.PacketConn, addr net.Addr, config a
 }
 
 func CreateTransport(conn net.PacketConn, quicConnPtr **quic.Conn, serverAddr M.Socksaddr, config aTLS.Config, quicConfig *quic.Config) (http.RoundTripper, error) {
+	handshakeTimeout := config.HandshakeTimeout()
+	quicConfig = quicConfigWithHandshakeTimeout(quicConfig, handshakeTimeout)
 	if quicTLSConfig, isQUICConfig := config.(Config); isQUICConfig {
 		return quicTLSConfig.CreateTransport(conn, quicConnPtr, serverAddr, quicConfig), nil
 	}
@@ -111,6 +129,7 @@ func CreateTransport(conn net.PacketConn, quicConnPtr **quic.Conn, serverAddr M.
 		TLSClientConfig: tlsConfig,
 		QUICConfig:      quicConfig,
 		Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+			cfg = quicConfigWithHandshakeTimeout(cfg, handshakeTimeout)
 			quicConn, err := quic.DialEarly(ctx, conn, serverAddr.UDPAddr(), tlsCfg, cfg)
 			if err != nil {
 				return nil, WrapError(err)
@@ -122,6 +141,7 @@ func CreateTransport(conn net.PacketConn, quicConnPtr **quic.Conn, serverAddr M.
 }
 
 func Listen(conn net.PacketConn, config aTLS.ServerConfig, quicConfig *quic.Config) (Listener, error) {
+	quicConfig = quicConfigWithHandshakeTimeout(quicConfig, config.HandshakeTimeout())
 	if quicTLSConfig, isQUICConfig := config.(ServerConfig); isQUICConfig {
 		listener, err := quicTLSConfig.Listen(conn, quicConfig)
 		return listener, WrapError(err)
@@ -135,6 +155,7 @@ func Listen(conn net.PacketConn, config aTLS.ServerConfig, quicConfig *quic.Conf
 }
 
 func ListenEarly(conn net.PacketConn, config aTLS.ServerConfig, quicConfig *quic.Config) (EarlyListener, error) {
+	quicConfig = quicConfigWithHandshakeTimeout(quicConfig, config.HandshakeTimeout())
 	if quicTLSConfig, isQUICConfig := config.(ServerConfig); isQUICConfig {
 		listener, err := quicTLSConfig.ListenEarly(conn, quicConfig)
 		return listener, WrapError(err)

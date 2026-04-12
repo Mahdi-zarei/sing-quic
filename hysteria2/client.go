@@ -29,7 +29,7 @@ import (
 	aTLS "github.com/sagernet/sing/common/tls"
 )
 
-const handshakeTimeout = 15 * time.Second
+const defaultHandshakeTimeout = 15 * time.Second
 
 type ClientOptions struct {
 	Context            context.Context
@@ -253,6 +253,10 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 		Header: make(http.Header),
 	}
 	protocol.AuthRequestToHeader(request.Header, protocol.AuthRequest{Auth: c.password, Rx: c.receiveBPS})
+	handshakeTimeout := c.tlsConfig.HandshakeTimeout()
+	if handshakeTimeout <= 0 {
+		handshakeTimeout = defaultHandshakeTimeout
+	}
 	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	response, err := http3Transport.RoundTrip(request.WithContext(ctx))
