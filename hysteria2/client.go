@@ -19,6 +19,7 @@ import (
 	"github.com/sagernet/sing-quic/hysteria"
 	hyCC "github.com/sagernet/sing-quic/hysteria/congestion"
 	"github.com/sagernet/sing-quic/hysteria2/internal/protocol"
+	"github.com/sagernet/sing-quic/hysteria2/realm"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -48,6 +49,7 @@ type ClientOptions struct {
 	QUICOptions        qtls.QUICOptions
 	UDPDisabled        bool
 	BBRProfile         string
+	RealmOptions       *realm.Options
 }
 
 type Client struct {
@@ -67,6 +69,8 @@ type Client struct {
 	quicConfig         *quic.Config
 	udpDisabled        bool
 	bbrProfile         congestion_meta2.Profile
+	realmOptions       *realm.Options
+	controlClient      *realm.ControlClient
 
 	connAccess sync.Mutex
 	conn       *clientQUICConnection
@@ -96,6 +100,17 @@ func NewClient(options ClientOptions) (*Client, error) {
 			return nil, err
 		}
 	}
+	if options.RealmOptions != nil && len(options.ServerPorts) > 0 {
+		return nil, E.New("realm and port hopping are mutually exclusive")
+	}
+	var controlClient *realm.ControlClient
+	if options.RealmOptions != nil {
+		var err error
+		controlClient, err = realm.NewControlClient(options.RealmOptions.ServerURL, options.RealmOptions.Token, options.RealmOptions.HTTPClient)
+		if err != nil {
+			return nil, E.Cause(err, "create control client")
+		}
+	}
 	var serverPorts []uint16
 	if len(options.ServerPorts) > 0 {
 		var err error
@@ -121,6 +136,8 @@ func NewClient(options ClientOptions) (*Client, error) {
 		quicConfig:         quicConfig,
 		udpDisabled:        options.UDPDisabled,
 		bbrProfile:         bbrProfile,
+		realmOptions:       options.RealmOptions,
+		controlClient:      controlClient,
 	}, nil
 }
 
@@ -200,6 +217,9 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 }
 
 func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
+	if c.realmOptions != nil {
+		return c.offerNewRealm(ctx)
+	}
 	dialCtx := ctx
 	hopCtx := c.ctx
 	if hopCtx == nil {
@@ -237,8 +257,45 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	if err != nil {
 		return nil, err
 	}
+	return c.authenticateAndWrap(ctx, packetConn, c.serverAddr)
+}
+
+func (c *Client) offerNewRealm(ctx context.Context) (*clientQUICConnection, error) {
+	rawConn, err := c.dialer.ListenPacket(ctx, M.Socksaddr{})
+	if err != nil {
+		return nil, E.Cause(err, "listen UDP for realm")
+	}
+	localAddresses, err := realm.Discover(ctx, rawConn, c.realmOptions.STUNServers)
+	if err != nil {
+		rawConn.Close()
+		return nil, E.Cause(err, "realm STUN discovery")
+	}
+	localMetadata, err := realm.GeneratePunchMetadata()
+	if err != nil {
+		rawConn.Close()
+		return nil, E.Cause(err, "generate punch metadata")
+	}
+	response, err := c.controlClient.Connect(ctx, c.realmOptions.RealmID, localAddresses, localMetadata)
+	if err != nil {
+		rawConn.Close()
+		return nil, E.Cause(err, "realm connect")
+	}
+	result, err := realm.Punch(ctx, rawConn, localAddresses, response.Addresses, response.PunchMetadata)
+	if err != nil {
+		rawConn.Close()
+		return nil, E.Cause(err, "realm punch")
+	}
+	var packetConn net.PacketConn = rawConn
+	if c.salamanderPassword != "" {
+		packetConn = NewSalamanderConn(packetConn, []byte(c.salamanderPassword))
+	}
+	peerAddr := M.SocksaddrFromNetIP(result.PeerAddr)
+	return c.authenticateAndWrap(ctx, packetConn, peerAddr)
+}
+
+func (c *Client) authenticateAndWrap(ctx context.Context, packetConn net.PacketConn, peerAddr M.Socksaddr) (*clientQUICConnection, error) {
 	var quicConn *quic.Conn
-	http3Transport, err := qtls.CreateTransport(packetConn, &quicConn, c.serverAddr, c.tlsConfig, c.quicConfig)
+	http3Transport, err := qtls.CreateTransport(packetConn, &quicConn, peerAddr, c.tlsConfig, c.quicConfig)
 	if err != nil {
 		packetConn.Close()
 		return nil, err
@@ -257,9 +314,9 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	if handshakeTimeout <= 0 {
 		handshakeTimeout = defaultHandshakeTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-	defer cancel()
-	response, err := http3Transport.RoundTrip(request.WithContext(ctx))
+	authCtx, authCancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer authCancel()
+	response, err := http3Transport.RoundTrip(request.WithContext(authCtx))
 	if err != nil {
 		if quicConn != nil {
 			quicConn.CloseWithError(0, "")
