@@ -285,7 +285,7 @@ func (c *Client) offerNewRealm(ctx context.Context) (*clientQUICConnection, erro
 		rawConn.Close()
 		return nil, E.Cause(err, "realm punch")
 	}
-	var packetConn net.PacketConn = rawConn
+	packetConn := rawConn
 	if c.salamanderPassword != "" {
 		packetConn = NewSalamanderConn(packetConn, []byte(c.salamanderPassword))
 	}

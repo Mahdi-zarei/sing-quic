@@ -25,13 +25,25 @@ func resolveSTUNServers(ctx context.Context, servers []string, resolver Resolver
 			host = server
 			port = "3478"
 		}
-		addresses, err := resolver(ctx, host, ipv4, ipv6)
-		if err != nil {
-			return nil, E.Cause(err, "resolve STUN server: ", server)
-		}
 		portNumber, err := strconv.ParseUint(port, 10, 16)
 		if err != nil {
 			return nil, E.Cause(err, "resolve STUN port: ", port)
+		}
+		addr, parseErr := netip.ParseAddr(host)
+		if parseErr == nil {
+			addr = addr.Unmap()
+			if addr.Is4() && !ipv4 {
+				continue
+			}
+			if !addr.Is4() && !ipv6 {
+				continue
+			}
+			resolved = append(resolved, netip.AddrPortFrom(addr, uint16(portNumber)))
+			continue
+		}
+		addresses, err := resolver(ctx, host, ipv4, ipv6)
+		if err != nil {
+			return nil, E.Cause(err, "resolve STUN server: ", server)
 		}
 		for _, address := range addresses {
 			resolved = append(resolved, netip.AddrPortFrom(address, uint16(portNumber)))
