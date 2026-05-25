@@ -45,6 +45,9 @@ type ClientOptions struct {
 	SendBPS            uint64
 	ReceiveBPS         uint64
 	SalamanderPassword string
+	GeckoPassword      string
+	GeckoMinPacketSize int
+	GeckoMaxPacketSize int
 	Password           string
 	TLSConfig          aTLS.Config
 	QUICOptions        qtls.QUICOptions
@@ -65,6 +68,9 @@ type Client struct {
 	sendBPS            uint64
 	receiveBPS         uint64
 	salamanderPassword string
+	geckoPassword      string
+	geckoMinPacketSize int
+	geckoMaxPacketSize int
 	password           string
 	tlsConfig          aTLS.Config
 	quicConfig         *quic.Config
@@ -104,6 +110,17 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if options.RealmOptions != nil && len(options.ServerPorts) > 0 {
 		return nil, E.New("realm and port hopping are mutually exclusive")
 	}
+	if options.GeckoPassword != "" {
+		if options.GeckoMinPacketSize == 0 {
+			options.GeckoMinPacketSize = geckoDefaultMinPacketSize
+		}
+		if options.GeckoMaxPacketSize == 0 {
+			options.GeckoMaxPacketSize = geckoDefaultMaxPacketSize
+		}
+		if options.GeckoMinPacketSize <= 0 || options.GeckoMinPacketSize > options.GeckoMaxPacketSize || options.GeckoMaxPacketSize > geckoMaxOnWireSize {
+			return nil, E.New("gecko: invalid packet size range")
+		}
+	}
 	var controlClient *realm.ControlClient
 	if options.RealmOptions != nil {
 		var err error
@@ -132,6 +149,9 @@ func NewClient(options ClientOptions) (*Client, error) {
 		sendBPS:            options.SendBPS,
 		receiveBPS:         options.ReceiveBPS,
 		salamanderPassword: options.SalamanderPassword,
+		geckoPassword:      options.GeckoPassword,
+		geckoMinPacketSize: options.GeckoMinPacketSize,
+		geckoMaxPacketSize: options.GeckoMaxPacketSize,
 		password:           options.Password,
 		tlsConfig:          options.TLSConfig,
 		quicConfig:         quicConfig,
@@ -241,7 +261,9 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 		}
 		var packetConn net.PacketConn
 		packetConn = bufio.NewUnbindPacketConn(udpConn)
-		if c.salamanderPassword != "" {
+		if c.geckoPassword != "" {
+			packetConn = NewGeckoConn(packetConn, []byte(c.geckoPassword), c.geckoMinPacketSize, c.geckoMaxPacketSize)
+		} else if c.salamanderPassword != "" {
 			packetConn = NewSalamanderConn(packetConn, []byte(c.salamanderPassword))
 		}
 		return packetConn, nil
@@ -297,7 +319,9 @@ func (c *Client) offerNewRealm(ctx context.Context) (*clientQUICConnection, erro
 		return nil, err
 	}
 	packetConn := winner.conn
-	if c.salamanderPassword != "" {
+	if c.geckoPassword != "" {
+		packetConn = NewGeckoConn(packetConn, []byte(c.geckoPassword), c.geckoMinPacketSize, c.geckoMaxPacketSize)
+	} else if c.salamanderPassword != "" {
 		packetConn = NewSalamanderConn(packetConn, []byte(c.salamanderPassword))
 	}
 	peerAddr := M.SocksaddrFromNetIP(result.PeerAddr)
